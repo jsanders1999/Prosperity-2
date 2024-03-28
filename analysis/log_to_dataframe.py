@@ -166,8 +166,9 @@ if __name__ == "__main__":
     for key, product_df in product_history_dfs.items():
         plot_price(product_df, key)
 
-    #plot_pnl_per_product(product_activities_dfs)
+    plot_pnl_per_product(product_activities_dfs)
     plt.show()
+
     
 
 
