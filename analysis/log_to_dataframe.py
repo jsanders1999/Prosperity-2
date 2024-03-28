@@ -124,16 +124,29 @@ def plot_market_orders(product_df, product):
 
     # Plot the market orders for each product
     for i in range(1,3):
+        #TODO: Fix NaN values
         
+        bid_prices = np.array(product_df[f'bid_price_{i}'])
+        timestamps = np.array(product_df['timestamp'])
+        timestamps = timestamps[~np.isnan(bid_prices)]
+        bid_prices = bid_prices[~np.isnan(bid_prices)]
+
         volumes = np.array(product_df[f'bid_volume_{i}'] )
+        volumes = volumes[~np.isnan(volumes)]
         colors = np.zeros((len(volumes), 3))
-        colors[:, 1] = 0.5+volumes/np.max(volumes)*0.5
-        ax.scatter(product_df['timestamp'], product_df[f'bid_price_{i}'], marker='^', s= volumes/2, c= colors, alpha=0.5)
+        colors[:, 1] = 0.2+volumes/np.max(volumes)*0.6
+        ax.scatter(timestamps, bid_prices, marker='^', s= volumes/2, c= colors, alpha=0.5)
+
+        ask_prices = np.array(product_df[f'ask_price_{i}'])
+        timestamps = np.array(product_df['timestamp'])
+        timestamps = timestamps[~np.isnan(ask_prices)]
+        ask_prices = ask_prices[~np.isnan(ask_prices)] 
 
         volumes = np.array(product_df[f'ask_volume_{i}'] )
+        volumes = volumes[~np.isnan(volumes)]
         colors = np.zeros((len(volumes), 3))
-        colors[:, 2] = 0.5+volumes/np.max(volumes)*0.5
-        ax.scatter(product_df['timestamp'], product_df[f'ask_price_{i}'], marker='v', s= volumes/2, c= colors, alpha=0.5)
+        colors[:, 2] = 0.2+volumes/np.max(volumes)*0.6
+        ax.scatter(timestamps, ask_prices, marker='v', s= volumes/2, c= colors, alpha=0.5)
 
     # Display the plot
     #plt.show()
