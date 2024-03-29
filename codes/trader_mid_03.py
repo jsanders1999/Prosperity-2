@@ -29,11 +29,15 @@ class Trader:
 
             # Set the acceptable price and position limit for each product
             if product == "STARFRUIT":
-                acceptable_price = 4970;  # Participant should calculate this value
+                print('Weighted mid price: ', calc_weighted_mid_price(order_depth.buy_orders, order_depth.sell_orders))
+                acceptable_price = calc_weighted_mid_price(order_depth.buy_orders, order_depth.sell_orders) 
                 position_limit = 20
+                offset = 1 #Optimize this parameter
             elif product == "AMETHYSTS":
-                acceptable_price = 10000;  # Participant should calculate this value
+                acceptable_price = 10000; 
                 position_limit = 20
+                offset = 0 
+                
             print("Acceptable price : " + str(acceptable_price))
             print("Buy Order depth : " + str(len(order_depth.buy_orders)) + ", Sell order depth : " + str(len(order_depth.sell_orders)))
 
@@ -47,7 +51,7 @@ class Trader:
                 if len(order_depth.sell_orders) != 0 and i < n_sell_orders:
                     best_ask, best_ask_amount = get_ith_sell_order(order_depth.sell_orders, i)
                     #print("Best ask: ", best_ask, best_ask_amount)
-                    if int(best_ask) < acceptable_price:
+                    if int(best_ask) < acceptable_price - offset:
                         # position + amount <= position_limit
                         print(f"buy i = {i}")
                         print("Best ask price: ", best_ask)
@@ -60,7 +64,7 @@ class Trader:
                 if len(order_depth.buy_orders) != 0 and i < n_buy_orders:
                     best_bid, best_bid_amount = get_ith_buy_order(order_depth.buy_orders, i)
                     #print("Best bid: ", best_bid, best_bid_amount)
-                    if int(best_bid) > acceptable_price:
+                    if best_bid > acceptable_price + offset:
                         #position - amount >= -position_limit
                         print(f"sell i = {i}")
                         print("Best bid price: ", best_bid)
@@ -110,6 +114,19 @@ def calc_mid_price(buy_orders, sell_orders):
     best_buy_order = get_best_buy_order(buy_orders)
     best_sell_order = get_best_sell_order(sell_orders)
     return (best_buy_order[0] + best_sell_order[0]) / 2
+
+def calc_weighted_mid_price(buy_orders, sell_orders):
+    #return the weighted mid price of the best buy and sell orders
+    sum_price_mul_volume = 0
+    sum_volume = 0
+    for price, volume in buy_orders.items():
+        sum_price_mul_volume += price * volume
+        sum_volume += volume
+    for price, volume in sell_orders.items():
+        #Note: volume is negative for sell orders
+        sum_price_mul_volume += price *(- volume)
+        sum_volume += (-volume)
+    return (sum_price_mul_volume / sum_volume)
 
 def get_best_sell_order(sell_orders):
     #return the sell order with the lowest price
