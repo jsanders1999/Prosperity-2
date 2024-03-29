@@ -6,10 +6,6 @@ import logging
 import matplotlib.pyplot as plt
 import numpy as np
 
-dataFile = "data/tutorial_data.log"
-
-
-
 def activities_string_to_dataframe(csv_string):
     # Use StringIO to convert the string to a file-like object
     csv_file = StringIO(csv_string)
@@ -154,6 +150,8 @@ def plot_market_orders(product_df, product):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
+
+    dataFile = "data/single_trades_tutorial_data.log"
 
     activities_df, trade_history_df = unpack_log_data(dataFile)
     product_activities_dfs = split_activities_df(activities_df)

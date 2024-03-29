@@ -3,8 +3,6 @@ from typing import List
 import string
 import numpy as np
 
-REPEATS = 1
-
 class Trader:
     
     def run(self, state: TradingState):
@@ -30,32 +28,39 @@ class Trader:
             print("Acceptable price : " + str(acceptable_price))
             print("Buy Order depth : " + str(len(order_depth.buy_orders)) + ", Sell order depth : " + str(len(order_depth.sell_orders)))
 
-            for i in range(REPEATS):
-                #todo: make function
-                if product in state.position.keys():
-                    position = state.position[product]
-                else:
-                    position = 0
+            #todo: make function
+            if product in state.position.keys():
+                position = state.position[product]
+            else:
+                position = 0
+                
+            n_sell_orders = len(order_depth.sell_orders)
+            n_buy_orders = len(order_depth.buy_orders)
 
-                if len(order_depth.sell_orders) != 0:
-                    best_ask, best_ask_amount = get_best_sell_order(order_depth.sell_orders)
+            for i in range(max(n_sell_orders, n_buy_orders)):
+                if len(order_depth.sell_orders) != 0 and i < n_sell_orders:
+                    best_ask, best_ask_amount = get_ith_sell_order(order_depth.sell_orders, i)
                     #print("Best ask: ", best_ask, best_ask_amount)
                     if int(best_ask) < acceptable_price:
                         # position + amount <= position_limit
+                        print(f"buy i = {i}")
                         print("Best ask amount: ", best_ask_amount)
                         print("Amount: ", min(position_limit - position, -best_ask_amount))
                         amount = min(position_limit - state.position[product], -best_ask_amount)
+                        position += amount
                         orders = place_buy_order(orders, product, best_ask, amount)
-                        
+
                 if len(order_depth.buy_orders) != 0:
-                    best_bid, best_bid_amount = get_best_buy_order(order_depth.buy_orders)
+                    best_bid, best_bid_amount = get_ith_buy_order(order_depth.buy_orders, i)
                     #print("Best bid: ", best_bid, best_bid_amount)
-                    if int(best_bid) > acceptable_price:
+                    if int(best_bid) > acceptable_price and i < n_buy_orders:
                         #position - amount >= -position_limit
+                        print(f"sell i = {i}")
                         print("Best bid amount: ", best_bid_amount)
                         print("Amount: ", min(position_limit + position, best_bid_amount))
                         amount = min(position_limit + position, best_bid_amount)
                         orders = place_sell_order(orders, product, best_bid, amount)
+                        position -= amount
             
             result[product] = orders
     
@@ -94,3 +99,13 @@ def get_best_buy_order(buy_orders):
     #return the buy order with the highest price
     sorted_buy_orders =  sorted(list(buy_orders.items()), key=lambda x: x[0], reverse=True)
     return sorted_buy_orders[0]
+
+def get_ith_sell_order(sell_orders, i):
+    #return the sell order with the lowest price
+    sorted_sell_orders = sorted(list(sell_orders.items()), key=lambda x: x[0], reverse=False)
+    return sorted_sell_orders[i]
+
+def get_ith_buy_order(buy_orders, i):
+    #return the buy order with the highest price
+    sorted_buy_orders =  sorted(list(buy_orders.items()), key=lambda x: x[0], reverse=True)
+    return sorted_buy_orders[i]
