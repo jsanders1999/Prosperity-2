@@ -113,17 +113,33 @@ def plot_price(product_history_df, product):
     # Display the plot
     #plt.show()
 
+def calc_weighted_mid_price(product_df):
+    prices_mul_volumes = np.zeros((len(product_df), 6))
+    volumes = np.zeros((len(product_df), 6))
+
+    for i in range(0,3):
+        prices_mul_volumes[:,i] = product_df[f'bid_price_{i+1}']*product_df[f'bid_volume_{i+1}']
+        prices_mul_volumes[:,i+3] =  product_df[f'ask_price_{i+1}']*product_df[f'ask_volume_{i+1}']
+        volumes[:,i] = product_df[f'bid_volume_{i+1}']
+        volumes[:,i+3] = product_df[f'ask_volume_{i+1}']
+    timestamps = product_df['timestamp']
+    weighted_mid_prices = np.nansum(prices_mul_volumes, axis = 1)/np.nansum(volumes, axis = 1)
+    return weighted_mid_prices
+
 def plot_market_orders(product_df, product):
     # Create a figure and axis
     fig, ax = plt.subplots()
     ax.set_title(f"Market Orders for {product}")
 
     # plot the mid prices as a line:
-    mid_prices = (product_df['bid_price_1'] + product_df['ask_price_1']) / 2
+    mid_prices = product_df['mid_price']
     timestamps = product_df['timestamp']
     ax.plot(timestamps, mid_prices, marker = ".", markersize = 0.1, linewidth = 0.1, color='black')
+
+    weighted_mid_prices = calc_weighted_mid_price(product_df)
+    ax.plot(timestamps, weighted_mid_prices, marker = "o", markersize = 0.5, linewidth = 0.1, color='red')
     # Plot the market orders for each product
-    for i in range(1,3):
+    for i in range(1,4):
         #TODO: Fix NaN values
         
         bid_prices = np.array(product_df[f'bid_price_{i}'])
@@ -150,19 +166,64 @@ def plot_market_orders(product_df, product):
 
     # Display the plot
     #plt.show()
+        
+def histogram_mid_price_process(product_df, product):
+    # Create a figure and axis
+    fig, ax = plt.subplots()
+    
+
+    # plot the mid prices as a line:
+    mid_prices = product_df['mid_price']
+    dS = mid_prices.diff()
+
+    ax.set_title(f"Mid Price change histogram for {product}\n mean = {dS.mean()}, std = {dS.std()}")
+
+    #ax.plot(timestamps[1:], dS[1:], marker = ".", markersize = 0.1, linewidth = 0.1, color='black')
+    bins = np.linspace(dS.min()-0.25, dS.max()+0.25,  int(2*(dS.max() - dS.min())+2))
+    ax.hist(dS[1:], bins=bins ,density=True, histtype='step', color='black')
+    # plot normal distibution over the histogram
+    x = np.linspace(dS.min(), dS.max(), 100)
+    pdf = np.exp(-x**2 / (2 * dS.std()**2)) / (dS.std() * np.sqrt(2 * np.pi))
+    ax.plot(x, pdf, color='red')
+    # Display the plot
+    #plt.show()
+
+def historgram_weighted_mid_price_process(product_df, product):
+    # Create a figure and axis
+    fig, ax = plt.subplots()
+
+
+    weighted_mid_prices = calc_weighted_mid_price(product_df)
+    dS = np.diff(weighted_mid_prices)
+    ax.set_title(f"Weighted Mid Price change histogram for {product}\n mean = {dS.mean()}, std = {dS.std()}")
+    bins = np.linspace(dS.min()-0.25, dS.max()+0.25,  int(20*(dS.max() - dS.min())+2))
+    ax.hist(dS[1:], bins=bins ,density=True, histtype='step', color='black')
+    # plot normal distibution over the histogram
+    x = np.linspace(dS.min(), dS.max(), 100)
+    pdf = np.exp(-x**2 / (2 * dS.std()**2)) / (dS.std() * np.sqrt(2 * np.pi))
+    ax.plot(x, pdf, color='red')
+    # Display the plot
+    #plt.show()
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    #logging.basicConfig(level=logging.INFO)
+    x = np.array([1, np.nan, 3, 4, 5])
+    y = np.array([1, 2, 3, 4, 5])
+    print(x*y)
+    print(np.nansum(x*y))
 
     dataFile = "data/single_trades_tutorial_data.log"
 
     activities_df, trade_history_df = unpack_log_data(dataFile)
     product_activities_dfs = split_activities_df(activities_df)
     product_history_dfs = split_trade_history_df(trade_history_df)
+
     
 
     for key, product_df in product_activities_dfs.items():
+        histogram_mid_price_process(product_df, key)
+        historgram_weighted_mid_price_process(product_df, key)
         plot_market_orders(product_df, key)
 
     for key, product_df in product_history_dfs.items():
