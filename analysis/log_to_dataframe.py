@@ -118,6 +118,10 @@ def plot_market_orders(product_df, product):
     fig, ax = plt.subplots()
     ax.set_title(f"Market Orders for {product}")
 
+    # plot the mid prices as a line:
+    mid_prices = (product_df['bid_price_1'] + product_df['ask_price_1']) / 2
+    timestamps = product_df['timestamp']
+    ax.plot(timestamps, mid_prices, marker = ".", markersize = 0.1, linewidth = 0.1, color='black')
     # Plot the market orders for each product
     for i in range(1,3):
         #TODO: Fix NaN values
