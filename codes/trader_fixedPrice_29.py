@@ -3,6 +3,12 @@ from typing import List
 import string
 import numpy as np
 
+#TODO
+# 1. Print the logs in a way that can easily be unpacked into a dict/dataframe
+# 2. Start storing revelvant variables in the traderData variable
+# 3. Implement a function to calculate the acceptable price for each product
+# 4. Implement a backteter to test the strategy on historical data
+
 class Trader:
     
     def run(self, state: TradingState):
@@ -19,6 +25,8 @@ class Trader:
         for product in state.order_depths:
             order_depth: OrderDepth = state.order_depths[product]
             orders: List[Order] = []
+
+            # Set the acceptable price and position limit for each product
             if product == "STARFRUIT":
                 acceptable_price = 4970;  # Participant should calculate this value
                 position_limit = 20
@@ -28,15 +36,12 @@ class Trader:
             print("Acceptable price : " + str(acceptable_price))
             print("Buy Order depth : " + str(len(order_depth.buy_orders)) + ", Sell order depth : " + str(len(order_depth.sell_orders)))
 
-            #todo: make function
-            if product in state.position.keys():
-                position = state.position[product]
-            else:
-                position = 0
+            #Get the current position (buy - sell from previous trades)
+            position = fetch_current_position(state.position, product)
                 
             n_sell_orders = len(order_depth.sell_orders)
             n_buy_orders = len(order_depth.buy_orders)
-
+            # loop through the ordered sell orders and buy orders and place orders if the price is acceptable
             for i in range(max(n_sell_orders, n_buy_orders)):
                 if len(order_depth.sell_orders) != 0 and i < n_sell_orders:
                     best_ask, best_ask_amount = get_ith_sell_order(order_depth.sell_orders, i)
@@ -44,18 +49,20 @@ class Trader:
                     if int(best_ask) < acceptable_price:
                         # position + amount <= position_limit
                         print(f"buy i = {i}")
+                        print("Best ask price: ", best_ask)
                         print("Best ask amount: ", best_ask_amount)
                         print("Amount: ", min(position_limit - position, -best_ask_amount))
                         amount = min(position_limit - state.position[product], -best_ask_amount)
                         position += amount
                         orders = place_buy_order(orders, product, best_ask, amount)
 
-                if len(order_depth.buy_orders) != 0:
+                if len(order_depth.buy_orders) != 0 and i < n_buy_orders:
                     best_bid, best_bid_amount = get_ith_buy_order(order_depth.buy_orders, i)
                     #print("Best bid: ", best_bid, best_bid_amount)
-                    if int(best_bid) > acceptable_price and i < n_buy_orders:
+                    if int(best_bid) > acceptable_price:
                         #position - amount >= -position_limit
                         print(f"sell i = {i}")
+                        print("Best bid price: ", best_bid)
                         print("Best bid amount: ", best_bid_amount)
                         print("Amount: ", min(position_limit + position, best_bid_amount))
                         amount = min(position_limit + position, best_bid_amount)
@@ -68,6 +75,13 @@ class Trader:
         
         conversions = 1
         return result, conversions, traderData
+    
+
+def fetch_current_position(position, product):
+    if product in position.keys():
+        return position[product]
+    else:
+        return 0
     
 
 def place_buy_order(orders, product, ask, amount):
