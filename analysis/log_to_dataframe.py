@@ -5,6 +5,7 @@ from io import StringIO
 import logging
 import matplotlib.pyplot as plt
 import numpy as np
+import jsonpickle as jp
 
 def activities_string_to_dataframe(csv_string):
     # Use StringIO to convert the string to a file-like object
@@ -94,8 +95,7 @@ def plot_pnl_per_product(product_dfs):
     # Add a legend
     ax.legend()
 
-    # Display the plot
-    #plt.show()
+    return fig, ax
 
 def split_trade_history_df_by_buyer_seller(trade_history_df):
     seller_grouped_trade_history_df = trade_history_df.groupby("seller")
@@ -124,7 +124,7 @@ def plot_trades(product_history_df, product, fig = None, ax = None):
     # Create a figure and axis
     if ax is None or fig is None:
         fig, ax = plt.subplots()
-        ax.set_title(f"Price for {product}")
+        ax.set_title(f"Trades for {product}")
 
     # Plot the profit and loss for each product
     grouped_trade_dfs = split_trade_history_df_by_buyer_seller(product_history_df)
@@ -166,6 +166,62 @@ def calc_weighted_mid_price(product_df):
     timestamps = product_df['timestamp']
     weighted_mid_prices = np.nansum(prices_mul_volumes, axis = 1)/np.nansum(volumes, axis = 1)
     return weighted_mid_prices
+
+def calc_weighted_mid_price_ask_bid(product_df):
+    prices_mul_volumes = np.zeros((len(product_df), 6))
+    volumes = np.zeros((len(product_df), 6))
+
+    for i in range(0,3):
+        prices_mul_volumes[:,i] = product_df[f'bid_price_{i+1}']*product_df[f'bid_volume_{i+1}']
+        prices_mul_volumes[:,i+3] =  product_df[f'ask_price_{i+1}']*product_df[f'ask_volume_{i+1}']
+        volumes[:,i] = product_df[f'bid_volume_{i+1}']
+        volumes[:,i+3] = product_df[f'ask_volume_{i+1}']
+    timestamps = product_df['timestamp']
+    weighted_mid_prices_bid = np.nansum(prices_mul_volumes[:,0:3], axis = 1)/np.nansum(volumes[:,0:3], axis = 1)
+    weighted_mid_prices_ask = np.nansum(prices_mul_volumes[:,3:6], axis = 1)/np.nansum(volumes[:,3:6], axis = 1)
+    weighted_mid_prices = (weighted_mid_prices_bid + weighted_mid_prices_ask)/2
+    return weighted_mid_prices
+
+def calc_moving_average(weighted_mid_prices, window):
+    moving_avg = weighted_mid_prices.copy()
+    for i in range(window):
+        moving_avg[i] = np.mean(weighted_mid_prices[:i+1])
+    moving_avg[window-1:] = np.convolve(weighted_mid_prices, np.ones(window)/window, mode='valid')
+    return moving_avg
+
+def calc_filtered_weighted_mid_price(weighted_mid_prices, window, bound, offset = 1.0):
+    #moving_avg = calc_moving_average(weighted_mid_prices, window)
+    filtered_weighted_mid_prices = weighted_mid_prices.copy()
+    different_inds = []
+    for i in range(1, len(weighted_mid_prices)):
+        if np.abs(weighted_mid_prices[i]- filtered_weighted_mid_prices[i-1]) > bound:
+            filtered_weighted_mid_prices[i] = filtered_weighted_mid_prices[i-1] + np.sign(weighted_mid_prices[i]- filtered_weighted_mid_prices[i-1])*offset
+            different_inds.append(i)
+    return filtered_weighted_mid_prices, different_inds
+
+def calc_predicted_price(prices):
+    probability_array = np.array([[0.01101101, 0.11661662, 0.04804805],
+                                    [0.11611612, 0.45545546, 0.0975976],
+                                    [0.04854855, 0.0975976 , 0.00900901]])
+    print(np.sum(probability_array))
+    predicted_prices = prices.copy()
+    for i in range(1, len(prices)):
+        curr_price = prices[i]
+        prev_price = prices[i-1]
+        curr_delta = np.round(curr_price - prev_price)
+        if curr_delta <= -1 :
+            predicted_prices[i] = curr_price + probability_array[0,:]@[-1, 0, 1]/np.sum(probability_array[0,:])
+        elif curr_delta == 0:
+            predicted_prices[i] = curr_price + probability_array[1,:]@[-1, 0, 1]/np.sum(probability_array[1,:])
+        elif curr_delta >= 1:
+            predicted_prices[i] = curr_price + probability_array[2,:]@[-1, 0, 1]/np.sum(probability_array[2,:])
+
+    print("predicted prices", np.linalg.norm(predicted_prices[:-1] - prices[1:]))
+    print("normal prices", np.linalg.norm(prices[:-1] - prices[1:]))
+    return predicted_prices
+    
+
+
 
 def plot_market_orders(product_df, product):
     # Create a figure and axis
@@ -218,6 +274,54 @@ def plot_market_orders(product_df, product):
     # Display the plot
     #plt.show()
     return fig, ax
+
+def plot_weighted_mid_price(product_df, product, window = 3, bound = 1.45):
+    # Create a figure and axis
+    fig, ax = plt.subplots()
+    ax.set_title(f"Mid prices for {product}")
+
+    # plot the mid prices as a line:
+    mid_prices = product_df['mid_price']
+    timestamps = product_df['timestamp']
+    #ax.plot(timestamps, mid_prices, marker = ".", markersize = 0.1, linewidth = 0.1, color='black')
+
+    weighted_mid_prices = calc_weighted_mid_price(product_df)
+    ax.plot(timestamps, weighted_mid_prices, marker = "s", markersize = 0.5, linewidth = 0.1, color='orange')
+
+    #weighted_mid_prices_ask_bid = calc_weighted_mid_price_ask_bid(product_df)   
+    #ax.plot(timestamps, weighted_mid_prices_ask_bid, marker = "s", markersize = 0.5, linewidth = 0.1, color='blue')
+
+    moving_avg_w_m = calc_moving_average(weighted_mid_prices, window)
+    #moving_avg_w_m_ask_bid = calc_moving_average(weighted_mid_prices_ask_bid, window)
+
+    #ax.plot(timestamps[window-1:], moving_avg_w_m, marker = "s", markersize = 0.5, linewidth = 0.2, color='red')
+    #ax.plot(timestamps[window-1:], moving_avg_w_m_ask_bid, marker = "s", markersize = 0.5, linewidth = 0.2, color='green')
+
+    filtered_weighted_mid_prices, different_inds = calc_filtered_weighted_mid_price(weighted_mid_prices, window, bound)
+    
+    ax.plot(timestamps, filtered_weighted_mid_prices, marker = "x", markersize = 0.8, linewidth = 0.05, color='red')
+    ax.plot(timestamps[different_inds], filtered_weighted_mid_prices[different_inds], marker = "$O$", markersize = 15, linestyle = "None", color='yellow')
+
+    predicted_prices = calc_predicted_price(filtered_weighted_mid_prices)
+
+    ax.plot(timestamps, predicted_prices, marker = "+", markersize = 3, linewidth = 0.05, color='purple')
+        
+    # if product == "AMETHYSTS":
+    #     print(f"{weighted_mid_prices}")
+    #     print(f"{np.mean(weighted_mid_prices-10000)=}")
+    #     print(f"{np.std(weighted_mid_prices-10000)=}")
+
+    #     print(f"{weighted_mid_prices_ask_bid}")
+    #     print(f"{np.mean(weighted_mid_prices_ask_bid-10000)=}")
+    #     print(f"{np.std(weighted_mid_prices_ask_bid-10000)=}")
+    #     fig, ax = plt.subplots()
+    #     ax.set_title(f"Weighted Mid Price histogram for {product}")
+    #     bins = np.linspace(-5.5, 5.5, 60)#12)
+    #     ax.hist(weighted_mid_prices-10000, bins=bins, density=True, histtype='step', color='black', label = "weighted mid price")
+    #     ax.hist(weighted_mid_prices_ask_bid-10000, bins=bins, density=True, histtype='step', color='blue', label = "weighted mid price ask bid")
+    #     ax.hist(filtered_weighted_mid_prices-10000, bins=bins, density=True, histtype='step', color='red', label = "filtered weighted mid price")
+    #     ax.legend()
+
         
 def histogram_mid_price_process(product_df, product):
     # Create a figure and axis
@@ -240,7 +344,7 @@ def histogram_mid_price_process(product_df, product):
     # Display the plot
     #plt.show()
 
-def historgram_weighted_mid_price_process(product_df, product):
+def historgram_weighted_mid_price_process(product_df, product, window = 2, bound = 1.45):
     # Create a figure and axis
     fig, ax = plt.subplots()
 
@@ -250,12 +354,33 @@ def historgram_weighted_mid_price_process(product_df, product):
     ax.set_title(f"Weighted Mid Price change histogram for {product}\n mean = {dS.mean()}, std = {dS.std()}")
     bins = np.linspace(dS.min()-0.25, dS.max()+0.25,  int(20*(dS.max() - dS.min())+2))
     ax.hist(dS[1:], bins=bins ,density=True, histtype='step', color='black')
+    bins = [-3.5, -2.5, -1.5, -0.5, 0.5, 1.5, 2.5, 3.5]
+    ax.hist(dS[1:], bins=bins ,density=True, histtype='step', color='black')
     # plot normal distibution over the histogram
     x = np.linspace(dS.min(), dS.max(), 100)
     pdf = np.exp(-x**2 / (2 * dS.std()**2)) / (dS.std() * np.sqrt(2 * np.pi))
     ax.plot(x, pdf, color='red')
     # Display the plot
     #plt.show()
+    auto_corr = np.correlate(dS, dS, mode='full')
+    fig, ax = plt.subplots()    
+    ax.set_title(f"Autocorrelation of change in weighted mid price for {product}")
+    ax.plot(auto_corr)
+
+    filtered_weighted_mid_price, different_inds = calc_filtered_weighted_mid_price(weighted_mid_prices, window, bound)
+
+    data = filtered_weighted_mid_price #weighted_mid_prices
+
+    dS_1 = data[1:] - data[:-1]
+    #dS_2 = weighted_mid_prices[2:] - weighted_mid_prices[:-2]
+    fig, ax = plt.subplots()
+    ax.set_title(f"2D histogram of change in weighted mid price for {product}")
+    ax.set_xlabel("dS_t")
+    ax.set_ylabel("dS_{t-1}")
+    bins= np.linspace(-2.5, 2.5, 6)#[-1.5, -0.5, 0.5, 1.5]
+    h, x_edges, y_edges, img = ax.hist2d( dS_1[1:], dS_1[:-1], bins=bins, density=True, cmap = 'Blues')
+    print(f"{product} {h=}")
+
 
 def histogram_asks_bids(product_df, product):
     fig, ax = plt.subplots()
@@ -277,31 +402,49 @@ def histogram_asks_bids(product_df, product):
     h, xedges, yedges, img = ax.hist2d(bid_prices, bid_volumes, bins=8, density=True, cmap = 'Blues')
     fig.colorbar(img, ax = ax)
 
+def histogram_trades(trades_df, product):
+    fig, ax = plt.subplots()
+    ax.set_title(f"Trade histogram for {product}")
+    trades = trades_df['price']
+    volumes = trades_df['quantity']
+    bins = (np.linspace(trades.min()-0.5, trades.max()+0.5, trades.max() - trades.min()+2),
+            np.linspace(volumes.min()-0.5, volumes.max()+0.5, volumes.max() - volumes.min()+2))
+    h, xedges, yedges, img = ax.hist2d(trades, volumes, bins=bins, density=True, cmap = 'Blues')
+    print(f"{h=}")
+    fig.colorbar(img, ax = ax)
+
 
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
-
-    dataFile = "data/weighted_mid_tutorial_data.log"
+    #dataFile = "data/constant_orders_2_1,55_tutorial_data.log"
+    dataFile = "data/null_tutorial_data.log"
+    #dataFile = "data/temp.log"
+    #dataFile = "data/speculative_1,55_2,55_4_tut_data.log"
 
     activities_df, trade_history_df = unpack_log_data(dataFile)
     product_activities_dfs = split_activities_df(activities_df)
     product_history_dfs = split_trade_history_df(trade_history_df)
 
-    histogram_asks_bids(product_activities_dfs['AMETHYSTS'], 'AMETHYSTS')
+    trades_csv_output_path = "analysis/backtestData/trades.csv"
+    trade_history_df.to_csv(trades_csv_output_path, index=False, sep=';')
+
+    #histogram_asks_bids(product_activities_dfs['AMETHYSTS'], 'AMETHYSTS')
+    #histogram_trades(product_history_dfs['AMETHYSTS'], 'AMETHYSTS')
 
     for key, activity_df in product_activities_dfs.items():
-        #histogram_mid_price_process(product_df, key)
-        #historgram_weighted_mid_price_process(product_df, key)
+        histogram_mid_price_process(activity_df, key)
+        historgram_weighted_mid_price_process(activity_df, key)
         fig, ax = plot_market_orders(activity_df, key)
+        plot_weighted_mid_price(activity_df, key)
         #trades_df = product_history_dfs[key]
         #plot_trades(trades_df, key, fig, ax)
 
 
     for key, product_df in product_history_dfs.items():
-        plot_trades(product_df, key)
+       plot_trades(product_df, key)
 
     plot_pnl_per_product(product_activities_dfs)
     plt.show()
