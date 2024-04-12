@@ -7,24 +7,21 @@ import matplotlib.pyplot as plt
 import numpy as np
 import jsonpickle as jp
 
+#TODO: Check if histogram probabilities are correct
+
 def activities_string_to_dataframe(csv_string):
-    # Use StringIO to convert the string to a file-like object
     csv_file = StringIO(csv_string)
-    
-    # Use pd.read_csv() to read the file-like object into a DataFrame
     df = pd.read_csv(csv_file, sep=';')
-    
     return df
 
 def trade_history_string_to_dataframe(json_string):
-    # Parse the JSON string into a Python list of dictionaries
     data_list = json.loads(json_string)
-    
-    # Convert the list of dictionaries into a DataFrame
     df = pd.DataFrame(data_list)
-    
     return df
 
+def log_data_to_dataframe(log_data_file_path):
+    #TODO: Implement
+    return
 
 def unpack_log_data(log_data_file_path):
     # Split the log data into three sections
@@ -39,7 +36,6 @@ def unpack_log_data(log_data_file_path):
     trade_history_str = trade_history_str.replace('Trade History:\n', '')
     
     #sandbox_logs = pd.DataFrame(json.loads('[' + sandbox_logs_str.replace('\n', '') + ']'))
-    
     trade_history = trade_history_string_to_dataframe(trade_history_str)
     logging.info(trade_history)
 
@@ -104,21 +100,48 @@ def split_trade_history_df_by_buyer_seller(trade_history_df):
     # Create a dictionary to store separate DataFrames for each product
     grouped_dfs = {}
 
-    # Iterate over each group and store it in the dictionary
-    for seller, group in seller_grouped_trade_history_df:
-        if seller=="SUBMISSION":
-            grouped_dfs["SOLD"] = group.reset_index(drop=True)
-        else:
-            temp_df = group.reset_index(drop=True)
+    if "SUBMISSION" in seller_grouped_trade_history_df.groups.keys():
+        # Iterate over each group and store it in the dictionary
+        for seller, group in seller_grouped_trade_history_df:
+            if seller=="SUBMISSION":
+                grouped_dfs["SOLD"] = group.reset_index(drop=True)
+            else:
+                temp_df = group.reset_index(drop=True)
 
-    buyer_grouped_trade_history_df = temp_df.groupby("buyer")
-    for buyer, group in buyer_grouped_trade_history_df:
-        if buyer=="SUBMISSION":
-            grouped_dfs["BOUGHT"] = group.reset_index(drop=True)
-        else:
-            grouped_dfs["OTHERS"] = group.reset_index(drop=True)
+        buyer_grouped_trade_history_df = temp_df.groupby("buyer")
+        for buyer, group in buyer_grouped_trade_history_df:
+            if buyer=="SUBMISSION":
+                grouped_dfs["BOUGHT"] = group.reset_index(drop=True)
+            else:
+                grouped_dfs["OTHERS"] = group.reset_index(drop=True)
+    else:
+        grouped_dfs["OTHERS"] = trade_history_df.reset_index(drop=True)
             
     return grouped_dfs
+
+def plot_position(trade_history_df, product):
+    fig, ax = plt.subplots()
+    ax.set_title(f"Position for {product}")
+
+    timestamps = trade_history_df['timestamp']
+
+    grouped_trades_df = split_trade_history_df_by_buyer_seller(trade_history_df)
+    if "SOLD" in grouped_trades_df.keys() and "BOUGHT" in grouped_trades_df.keys():
+        bought_df = grouped_trades_df["BOUGHT"]
+        sold_df = grouped_trades_df["SOLD"]
+
+        bought_timestamps = bought_df['timestamp']
+        sold_timestamps = sold_df['timestamp']
+
+        position = np.zeros(len(timestamps))
+
+        for i, time in enumerate(timestamps):
+            position[i] = np.sum(bought_df['quantity'][bought_timestamps<=time]) - np.sum(sold_df['quantity'][sold_timestamps<=time])
+        ax.plot(timestamps, position, marker='.', markersize = 1.5, linestyle="None", label="position")
+
+    return
+
+
 
 def plot_trades(product_history_df, product, fig = None, ax = None):
     # Create a figure and axis
@@ -146,6 +169,59 @@ def plot_trades(product_history_df, product, fig = None, ax = None):
             marker = '$+$'
             alpha = 0.5
         ax.scatter(timestamp,trades, marker=marker, s = 5*volume,  c = color, label = key, alpha = alpha)
+
+    # Add a legend
+    ax.legend()
+
+    plot_position(product_history_df, product)
+
+    # Display the plot
+    #plt.show()
+    return fig, ax
+
+def plot_trades_difference(product_history_df, product_activity_df, product, fig = None, ax = None):
+    # Create a figure and axis
+    if ax is None or fig is None:
+        fig, ax = plt.subplots()
+        ax.set_title(f"Trades for {product}")
+
+    # Plot the profit and loss for each product
+    grouped_trade_dfs = split_trade_history_df_by_buyer_seller(product_history_df)
+
+    weighted_mid_price = calc_weighted_mid_price(product_activity_df)
+    filtered_weighted_mid_price, _ = calc_filtered_weighted_mid_price(weighted_mid_price, 2, 1.45)
+
+
+    for key, trade_df in grouped_trade_dfs.items():
+
+        trades = trade_df['price']
+
+        if product == "AMETHYSTS":
+            values = 10000*np.ones(trades.shape)
+        else:
+            values = filtered_weighted_mid_price #np.round(filtered_weighted_mid_price-0.5)+0.5
+            relevant_inds  = []
+            trade_timestamps = trade_df['timestamp']
+            activity_timestamps = product_activity_df['timestamp']
+            for i, timestamp in enumerate(trade_timestamps):
+                relevant_inds += [list(activity_timestamps).index(timestamp)]
+            values = values[relevant_inds]
+
+        volume = trade_df['quantity']
+        timestamp = trade_df['timestamp']
+        if key == "SOLD":
+            color = "red"
+            marker = "$O$"
+            alpha = 0.9
+        elif key == "BOUGHT":
+            color = "blue"
+            marker = "$X$"
+            alpha = 0.9
+        else:
+            color = "teal"
+            marker = '$+$'
+            alpha = 0.5
+        ax.scatter(timestamp,trades-values, marker=marker, s = 5*volume,  c = color, label = key, alpha = alpha)
 
     # Add a legend
     ax.legend()
@@ -200,9 +276,16 @@ def calc_filtered_weighted_mid_price(weighted_mid_prices, window, bound, offset 
     return filtered_weighted_mid_prices, different_inds
 
 def calc_predicted_price(prices):
+    #Bases on toturial data:
     probability_array = np.array([[0.01101101, 0.11661662, 0.04804805],
                                     [0.11611612, 0.45545546, 0.0975976],
                                     [0.04854855, 0.0975976 , 0.00900901]])
+
+    #Based on provided data round 1:
+    #probability_array = np.array([[0.00993532, 0.1005201,  0.04554244],
+    #                            [0.1010202,  0.46589318, 0.1090218 ],
+    #                            [0.04504234, 0.1095219,  0.0135027 ]])
+    
     print(np.sum(probability_array))
     predicted_prices = prices.copy()
     for i in range(1, len(prices)):
@@ -311,14 +394,14 @@ def plot_weighted_mid_price(product_df, product, window = 3, bound = 1.45):
     #     print(f"{np.mean(weighted_mid_prices-10000)=}")
     #     print(f"{np.std(weighted_mid_prices-10000)=}")
 
-    #     print(f"{weighted_mid_prices_ask_bid}")
-    #     print(f"{np.mean(weighted_mid_prices_ask_bid-10000)=}")
-    #     print(f"{np.std(weighted_mid_prices_ask_bid-10000)=}")
+    #     #print(f"{weighted_mid_prices_ask_bid}")
+    #     #print(f"{np.mean(weighted_mid_prices_ask_bid-10000)=}")
+    #     #print(f"{np.std(weighted_mid_prices_ask_bid-10000)=}")
     #     fig, ax = plt.subplots()
     #     ax.set_title(f"Weighted Mid Price histogram for {product}")
     #     bins = np.linspace(-5.5, 5.5, 60)#12)
     #     ax.hist(weighted_mid_prices-10000, bins=bins, density=True, histtype='step', color='black', label = "weighted mid price")
-    #     ax.hist(weighted_mid_prices_ask_bid-10000, bins=bins, density=True, histtype='step', color='blue', label = "weighted mid price ask bid")
+    #     #ax.hist(weighted_mid_prices_ask_bid-10000, bins=bins, density=True, histtype='step', color='blue', label = "weighted mid price ask bid")
     #     ax.hist(filtered_weighted_mid_prices-10000, bins=bins, density=True, histtype='step', color='red', label = "filtered weighted mid price")
     #     ax.legend()
 
@@ -377,7 +460,7 @@ def historgram_weighted_mid_price_process(product_df, product, window = 2, bound
     ax.set_title(f"2D histogram of change in weighted mid price for {product}")
     ax.set_xlabel("dS_t")
     ax.set_ylabel("dS_{t-1}")
-    bins= np.linspace(-2.5, 2.5, 6)#[-1.5, -0.5, 0.5, 1.5]
+    bins= np.linspace(-1.5, 1.5, 4)#[-1.5, -0.5, 0.5, 1.5]
     h, x_edges, y_edges, img = ax.hist2d( dS_1[1:], dS_1[:-1], bins=bins, density=True, cmap = 'Blues')
     print(f"{product} {h=}")
 
@@ -402,41 +485,92 @@ def histogram_asks_bids(product_df, product):
     h, xedges, yedges, img = ax.hist2d(bid_prices, bid_volumes, bins=8, density=True, cmap = 'Blues')
     fig.colorbar(img, ax = ax)
 
-def histogram_trades(trades_df, product):
+def histogram_trades(trades_df, activity_df, product, window = 2, bound=1.45):
     fig, ax = plt.subplots()
     ax.set_title(f"Trade histogram for {product}")
     trades = trades_df['price']
+    trade_timestamps = trades_df['timestamp']
+    if product == "AMETHYSTS":
+        value = 10000*np.ones(trades.shape)
+        activity_timestamps = activity_df['timestamp']
+    else:
+        activity_timestamps = activity_df['timestamp']
+        weighted_mid_price = calc_weighted_mid_price(activity_df)
+        #mid_price = np.array(activity_df['mid_price'])
+        #filtered_weighted_mid_price, _ = calc_filtered_weighted_mid_price(weighted_mid_price, window, bound)
+        value = weighted_mid_price #np.round(weighted_mid_price-0.5)+0.5 #filtered_weighted_mid_price
+        relevant_inds  = []
+        for i, timestamp in enumerate(trade_timestamps):
+            relevant_inds += [list(activity_timestamps).index(timestamp)]
+        value = value[relevant_inds]
+    print(trades.shape)
+    print(value.shape)
+    difference = trades - value
     volumes = trades_df['quantity']
-    bins = (np.linspace(trades.min()-0.5, trades.max()+0.5, trades.max() - trades.min()+2),
-            np.linspace(volumes.min()-0.5, volumes.max()+0.5, volumes.max() - volumes.min()+2))
-    h, xedges, yedges, img = ax.hist2d(trades, volumes, bins=bins, density=True, cmap = 'Blues')
+    bins = (np.linspace(np.floor(difference.min())-0.5, np.ceil(difference.max())+0.5, 10*(round(np.ceil(difference.max()) - np.floor(difference.min()))+1)+1),
+            np.linspace(volumes.min()-0.5, volumes.max()+0.5, round(volumes.max() - volumes.min())+2))
+    h, xedges, yedges, img = ax.hist2d(difference, volumes, bins=bins, density=True, cmap = 'Blues')
     print(f"{h=}")
     fig.colorbar(img, ax = ax)
 
+    fig, ax = plt.subplots()
+    ax.set_title(f"Trade histogram for {product}")
+    probs = np.histogram(difference, bins=xedges, density=False, weights=volumes)[0]/(np.array(activity_timestamps)[-1]/100)
+    #probs = h@(yedges[1:]-0.5)/np.array(activity_timestamps)[-1]
+    print(f"for {product=} {probs=}")
+    print(f"{xedges=}")
+    ax.plot((xedges[:-1]+xedges[1:])/2, probs)
 
+    h, xedges, yedges = np.histogram2d(difference, volumes, bins=bins, density=False)
+
+    ax.scatter((xedges[:-1]+xedges[1:])/2, np.sum(h*(yedges[1:]-0.5), axis = 1)/(np.array(activity_timestamps)[-1]/100), color = 'red')
+
+
+def read_log_file(log_path):
+    activities_df, trade_history_df = unpack_log_data(log_path)
+    return activities_df, trade_history_df
+
+def read_csv_files(activities_path, trade_history_path):
+    activities_df = pd.read_csv(activities_path, sep=';')
+    trade_history_df = pd.read_csv(trade_history_path, sep=';')
+    return activities_df, trade_history_df
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
     #dataFile = "data/constant_orders_2_1,55_tutorial_data.log"
-    dataFile = "data/null_tutorial_data.log"
+    #dataFile = "data/null_tutorial_data.log"
     #dataFile = "data/temp.log"
     #dataFile = "data/speculative_1,55_2,55_4_tut_data.log"
 
-    activities_df, trade_history_df = unpack_log_data(dataFile)
+    #log_path = "data/TutorialLogs/constant_orders_2&4_tutorial_data.log"
+
+    #log_path = "data/Round1Logs/speculative_STRF_1,54_2,54_4_AMTH_2_4_4.log"
+    #log_path = "data/Round1Logs/temp.log"
+    #log_path = "data/Round1Logs/speculative_STRF_2,5_3,5_4_2_AMTH_2_4_4.log"
+    #log_path = "data/Round1Logs/speculative_STRF_2,3_3,5_2,1_3,5_1_1_AMTH_2_4_10.log"
+    #log_path = "data/Round1Logs/speculative_STRF_2,3_3,5_2,1_3,5_6_0_AMTH_2_4_11.log"
+    log_path = "data/Round1Logs/speculative_STRF_2,3_3,5_2,1_3,5_6_1_AMTH_2_4_3.log"
+    activities_df, trade_history_df = read_log_file(log_path)
+
+    #activities_path = "data/ProvidedData/prices_round_1_day_-2.csv"
+    #trade_history_path = "data/ProvidedData/trades_round_1_day_-2_nn.csv"
+    #activities_df, trade_history_df = read_csv_files(activities_path, trade_history_path)
+
     product_activities_dfs = split_activities_df(activities_df)
     product_history_dfs = split_trade_history_df(trade_history_df)
 
-    trades_csv_output_path = "analysis/backtestData/trades.csv"
-    trade_history_df.to_csv(trades_csv_output_path, index=False, sep=';')
+    #trades_csv_output_path = "analysis/backtestData/trades.csv"
+    #trade_history_df.to_csv(trades_csv_output_path, index=False, sep=';')
 
     #histogram_asks_bids(product_activities_dfs['AMETHYSTS'], 'AMETHYSTS')
-    #histogram_trades(product_history_dfs['AMETHYSTS'], 'AMETHYSTS')
+    histogram_trades(product_history_dfs['AMETHYSTS'], product_activities_dfs['AMETHYSTS'], 'AMETHYSTS')
+    histogram_trades(product_history_dfs['STARFRUIT'], product_activities_dfs['STARFRUIT'], 'STARFRUIT')
 
     for key, activity_df in product_activities_dfs.items():
-        histogram_mid_price_process(activity_df, key)
-        historgram_weighted_mid_price_process(activity_df, key)
+        #histogram_mid_price_process(activity_df, key)
+        #historgram_weighted_mid_price_process(activity_df, key)
         fig, ax = plot_market_orders(activity_df, key)
         plot_weighted_mid_price(activity_df, key)
         #trades_df = product_history_dfs[key]
@@ -445,6 +579,7 @@ if __name__ == "__main__":
 
     for key, product_df in product_history_dfs.items():
        plot_trades(product_df, key)
+       plot_trades_difference(product_df, product_activities_dfs[key], key)
 
     plot_pnl_per_product(product_activities_dfs)
     plt.show()
