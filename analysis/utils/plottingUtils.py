@@ -237,6 +237,7 @@ def plot_weighted_mid_price(product_df, product, window = 3, bound = 1.45):
     #     #ax.hist(weighted_mid_prices_ask_bid-10000, bins=bins, density=True, histtype='step', color='blue', label = "weighted mid price ask bid")
     #     ax.hist(filtered_weighted_mid_prices-10000, bins=bins, density=True, histtype='step', color='red', label = "filtered weighted mid price")
     #     ax.legend()
+    return fig, ax
 
         
 def histogram_mid_price_process(product_df, product):
