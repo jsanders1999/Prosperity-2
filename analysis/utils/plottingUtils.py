@@ -5,17 +5,39 @@ import logging
 import matplotlib.pyplot as plt
 import numpy as np
 import jsonpickle as jp
+import matplotlib.cm as cm
+from matplotlib.colors import LinearSegmentedColormap, Normalize, ListedColormap
+from random import choice, seed
 
 from utils.dataUtils import calc_weighted_mid_price, calc_weighted_mid_price_ask_bid, calc_moving_average, calc_filtered_weighted_mid_price, calc_predicted_price
 from utils.unpackUtils import read_log_file, read_csv_files, split_activities_df, split_trade_history_df, split_trade_history_df_by_buyer_seller
+
+def generate_qualitative_cmap(n, color_seed = 1):
+    seed(color_seed)
+    colorblind6 = ["#5790fc", "#f89c20", "#e42536", "#964a8b", "#9c9ca1", "#7a21dd"]
+    colorblind8 = ["#1845fb", "#ff5e02", "#c91f16", "#c849a9", "#adad7d", "#86c8dd", "#578dff", "#656364"]
+    colorblind10 = ["#3f90da", "#ffa90e", "#bd1f01", "#94a4a2", "#832db6", "#a96b59", "#e76300", "#b9ac70", "#717581", "#92dadd"]
+    if n<=6:
+        colorlist = colorblind6[:n]
+    elif 6<n<=8:
+        colorlist = colorblind8[:n]
+    elif 8<n<=10:
+        colorlist = colorblind10[:n]
+    elif n>10:
+        rand_colors = ["#"+''.join([choice('ABCDEF0123456789') for j in range(6)]) for j in range(n-10)]
+        colorlist = colorblind10 + rand_colors
+    return cm.ScalarMappable(cmap=ListedColormap(colorlist)).cmap, colorlist
+
 
 def plot_pnl_per_product(product_dfs):
     # Create a figure and axis
     fig, ax = plt.subplots()
 
+    cmap, colorlist = generate_qualitative_cmap(len(list(product_dfs.keys())))
+
     # Plot the profit and loss for each product
-    for product, product_df in product_dfs.items():
-        ax.plot(product_df['timestamp'], product_df['profit_and_loss'], marker='.', markersize = 0.5, linestyle="None", label=product)
+    for i, (product, product_df) in enumerate(product_dfs.items()):
+        ax.plot(product_df['timestamp'], product_df['profit_and_loss'], color = colorlist[i], marker='.', markersize = 5, linestyle="None", label=product)
 
     # Add a legend
     ax.legend()
@@ -75,6 +97,15 @@ def plot_trades(product_history_df, product, fig = None, ax = None):
 
     # Add a legend
     ax.legend()
+    if "SOLD" in grouped_trade_dfs.keys():
+        print(f"trades sold for {product} = ", grouped_trade_dfs["SOLD"].shape[0])
+        print(f"volume sold for {product} = ", np.sum(grouped_trade_dfs["SOLD"]['quantity']))
+    if "BOUGHT" in grouped_trade_dfs.keys():
+        print(f"trades bought for {product} = ", grouped_trade_dfs["BOUGHT"].shape[0])
+        print(f"volume bought for {product} = ", np.sum(grouped_trade_dfs["BOUGHT"]['quantity']))
+    if "OTHERS" in grouped_trade_dfs.keys():
+        print(f"trades other for {product} = ", grouped_trade_dfs["OTHERS"].shape[0])
+        print(f"volume other for {product} = ", np.sum(grouped_trade_dfs["OTHERS"]['quantity']))
 
     plot_position(product_history_df, product)
 
@@ -82,7 +113,7 @@ def plot_trades(product_history_df, product, fig = None, ax = None):
     #plt.show()
     return fig, ax
 
-def plot_trades_difference(product_history_df, product_activity_df, product, fig = None, ax = None):
+def plot_trades_difference(product_history_df, product_activity_df, product, bound = 100, fig = None, ax = None):
     # Create a figure and axis
     if ax is None or fig is None:
         fig, ax = plt.subplots()
@@ -92,7 +123,7 @@ def plot_trades_difference(product_history_df, product_activity_df, product, fig
     grouped_trade_dfs = split_trade_history_df_by_buyer_seller(product_history_df)
 
     weighted_mid_price = calc_weighted_mid_price(product_activity_df)
-    filtered_weighted_mid_price, _ = calc_filtered_weighted_mid_price(weighted_mid_price, 2, 1.45)
+    filtered_weighted_mid_price, _ = calc_filtered_weighted_mid_price(weighted_mid_price, 2, bound)
 
 
     for key, trade_df in grouped_trade_dfs.items():
@@ -163,7 +194,8 @@ def plot_market_orders(product_df, product):
         volumes = np.array(product_df[f'bid_volume_{i}'] )
         volumes = volumes[~np.isnan(volumes)]
         colors = np.zeros((len(volumes), 3))
-        colors[:, 1] = 0.2+volumes/np.max(volumes)*0.6
+        if len(volumes) > 0:
+            colors[:, 1] = 0.2+volumes/np.max(volumes)*0.6
         if i==1:
             ax.scatter(timestamps, bid_prices, marker='v', s= volumes/2, c= colors, alpha=0.5, label = "bid")
         else:
@@ -178,7 +210,8 @@ def plot_market_orders(product_df, product):
         volumes = np.array(product_df[f'ask_volume_{i}'] )
         volumes = volumes[~np.isnan(volumes)]
         colors = np.zeros((len(volumes), 3))
-        colors[:, 2] = 0.2+volumes/np.max(volumes)*0.6
+        if len(volumes)>0:
+            colors[:, 2] = 0.2+volumes/np.max(volumes)*0.6
         if i==1:
             ax.scatter(timestamps, ask_prices, marker='^', s= volumes/2, c= colors, alpha=0.5, label = "ask")
         else:
@@ -191,10 +224,11 @@ def plot_market_orders(product_df, product):
     #plt.show()
     return fig, ax
 
-def plot_weighted_mid_price(product_df, product, window = 3, bound = 1.45):
+def plot_weighted_mid_price(product_df, product, window = 3, bound = 1.45, fig = None, ax = None):
     # Create a figure and axis
-    fig, ax = plt.subplots()
-    ax.set_title(f"Mid prices for {product}")
+    if ax is None or fig is None:
+        fig, ax = plt.subplots()
+        ax.set_title(f"Weighted mid prices for {product}")
 
     # plot the mid prices as a line:
     mid_prices = product_df['mid_price']
@@ -202,7 +236,7 @@ def plot_weighted_mid_price(product_df, product, window = 3, bound = 1.45):
     #ax.plot(timestamps, mid_prices, marker = ".", markersize = 0.1, linewidth = 0.1, color='black')
 
     weighted_mid_prices = calc_weighted_mid_price(product_df)
-    ax.plot(timestamps, weighted_mid_prices, marker = "s", markersize = 0.5, linewidth = 0.1, color='orange')
+    ax.plot(timestamps, weighted_mid_prices, marker = "s", markersize = 0.5, linewidth = 0.1, color='orange', label = "weighted mid price")
 
     #weighted_mid_prices_ask_bid = calc_weighted_mid_price_ask_bid(product_df)   
     #ax.plot(timestamps, weighted_mid_prices_ask_bid, marker = "s", markersize = 0.5, linewidth = 0.1, color='blue')
@@ -216,11 +250,13 @@ def plot_weighted_mid_price(product_df, product, window = 3, bound = 1.45):
     filtered_weighted_mid_prices, different_inds = calc_filtered_weighted_mid_price(weighted_mid_prices, window, bound)
     
     ax.plot(timestamps, filtered_weighted_mid_prices, marker = "x", markersize = 0.8, linewidth = 0.05, color='red')
-    ax.plot(timestamps[different_inds], filtered_weighted_mid_prices[different_inds], marker = "$O$", markersize = 15, linestyle = "None", color='yellow')
+    ax.plot(timestamps[different_inds], filtered_weighted_mid_prices[different_inds], marker = "$O$", markersize = 15, linestyle = "None", color='yellow', label = "filtered weighted mid price")
 
-    predicted_prices = calc_predicted_price(filtered_weighted_mid_prices)
+    if product == "STARFRUIT":
+        predicted_prices = calc_predicted_price(filtered_weighted_mid_prices)
+        ax.plot(timestamps, predicted_prices, marker = "+", markersize = 3, linewidth = 0.05, color='purple', label = "predicted price")
 
-    ax.plot(timestamps, predicted_prices, marker = "+", markersize = 3, linewidth = 0.05, color='purple')
+    ax.legend()
         
     # if product == "AMETHYSTS":
     #     print(f"{weighted_mid_prices}")
@@ -337,8 +373,6 @@ def histogram_trades(trades_df, activity_df, product, window = 2, bound=1.45):
         for i, timestamp in enumerate(trade_timestamps):
             relevant_inds += [list(activity_timestamps).index(timestamp)]
         value = value[relevant_inds]
-    print(trades.shape)
-    print(value.shape)
     difference = trades - value
     volumes = trades_df['quantity']
     bins = (np.linspace(np.floor(difference.min())-0.5, np.ceil(difference.max())+0.5, 10*(round(np.ceil(difference.max()) - np.floor(difference.min()))+1)+1),

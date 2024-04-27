@@ -38,15 +38,42 @@ def unpack_log_data(log_data_file_path):
 
     # Remove the section headers
     sandbox_logs_str = sandbox_logs_str.replace('Sandbox logs:\n', '')
+    sandbox_logs_str = sandbox_logs_str.replace('"sandboxLog": "",\n', '')
+    sandbox_logs_str = sandbox_logs_str.replace('\\\\"', '"')
+    sandbox_logs_str = sandbox_logs_str.replace('\\"', '"')
+    sandbox_logs_str = sandbox_logs_str.replace('\\n', '\n')
+    sandbox_logs_str = sandbox_logs_str.replace('"{', '{')
+    sandbox_logs_str = sandbox_logs_str.replace('}"', '}')
     activities_log_str = activities_log_str.replace('Activities log:\n', '')
     trade_history_str = trade_history_str.replace('Trade History:\n', '')
+
+    log_list = sandbox_logs_str.split('\n}\n{\n')
+    log_list[0] = log_list[0].replace('{\n', '')
+    log_list[-1] = log_list[-1].replace('\n}', '')
+
+    log_dict = {}
+    for element in log_list:
+        # Parse the input string into a dictionary
+        parsed_data = json.loads("{"+element+"}")
+
+        # Extracting lambdaLog and timestamp
+        lambda_log = parsed_data['lambdaLog']
+        timestamp = parsed_data['timestamp']
+
+        # Creating a dictionary with timestamp as key and lambdaLog as value
+        result = {timestamp: lambda_log}
+        log_dict.update(result)
+        
+    print(log_dict)
+
+
     
     #sandbox_logs = pd.DataFrame(json.loads('[' + sandbox_logs_str.replace('\n', '') + ']'))
     trade_history = trade_history_string_to_dataframe(trade_history_str)
-    logging.info(trade_history)
+    #logging.info(trade_history)
 
     activities_log = activities_string_to_dataframe(activities_log_str)
-    logging.info(activities_log)
+    #logging.info(activities_log)
 
     return activities_log, trade_history
 

@@ -4,7 +4,8 @@ from math import factorial
 from tqdm import tqdm
 from numba import njit
 
-from log_to_dataframe import read_csv_files, split_activities_df, split_trade_history_df, calc_weighted_mid_price
+from utils.unpackUtils import read_csv_files, split_activities_df, split_trade_history_df
+from utils.dataUtils import calc_weighted_mid_price
 
 edges_amth = np.array([-5.5, -5.4, -5.3, -5.2, -5.1, -5. , -4.9, -4.8, -4.7, -4.6, -4.5,
        -4.4, -4.3, -4.2, -4.1, -4. , -3.9, -3.8, -3.7, -3.6, -3.5, -3.4,
@@ -82,7 +83,17 @@ probs_starf = np.array([0.00000000e+00, 0.00000000e+00, 0.00000000e+00, 0.000000
        0.00000000e+00, 0.00000000e+00, 0.00000000e+00, 0.00000000e+00,
        0.00000000e+00, 0.00000000e+00])
 
-def generate_edges_probs_from_data_files(trade_file_paths, activities_file_paths, product, n_subdivs = 20, max_volume = 5):
+@njit
+def factorial(n):
+    if n==0:
+        return 1.0
+    else:
+        result = 1.0
+        for i in range(1, n+1):
+            result *= i
+        return result
+
+def generate_edges_probs_from_data_files(trade_file_paths, activities_file_paths, product, n_subdivs = 20, max_volume = 20, filter_noise=True):
     differences = []
     volumes = []
     total_timestamps = 0
@@ -132,7 +143,10 @@ def generate_edges_probs_from_data_files(trade_file_paths, activities_file_paths
     ax.set_title(f"Trade histogram for {product}")
     probs = np.histogram(differences, bins=xedges, density=False, weights=volumes)[0]/(total_timestamps)
     #probs = h@(yedges[1:]-0.5)/np.array(activity_timestamps)[-1]
+    if filter_noise:
+        probs = np.where(probs>0.02*np.sum(probs), probs, 0.0)
     print(f"for {product=} {probs=}")
+
 
     print(f"{xedges=}")
     ax.plot((xedges[:-1]+xedges[1:])/2, probs)
@@ -143,15 +157,33 @@ def generate_edges_probs_from_data_files(trade_file_paths, activities_file_paths
     return probs, xedges
 
 
-#@njit
-def gamma_p(delta_p, edges, probs):
-    delta_p = np.max([delta_p, 0.0])
-    return np.sum(probs[edges[1:] >= delta_p]) 
+# #@njit
+# def gamma_p(delta_p, edges, probs):
+#     delta_p = np.max([delta_p, 0.0])
+#     return np.sum(probs[edges[1:] >= delta_p]) 
 
-#@njit
+@njit
+def gamma_p(delta_p, edges, probs):
+    result = 0.0
+    delta_p = max(delta_p, 0.0)  # Avoid using np.max for a scalar
+    for i in range(len(edges)):
+        if edges[i] >= delta_p:
+            result += probs[i]
+    return result
+
+# #@njit
+# def gamma_n(delta_n, edges, probs):
+#     delta_n = np.max([delta_n, 0.0])
+#     return np.sum(probs[edges[:-1] <= -delta_n])
+
+@njit
 def gamma_n(delta_n, edges, probs):
-    delta_n = np.max([delta_n, 0.0])
-    return np.sum(probs[edges[:-1] <= -delta_n])
+    result = 0.0
+    delta_n = max(delta_n, 0.0)  # Avoid using np.max for a scalar
+    for i in range(len(edges) - 1):
+        if edges[i] <= -delta_n:
+            result += probs[i]
+    return result
 
 #@njit
 def E_gain_next_turn(delta_p, delta_n, edges, probs):
@@ -164,6 +196,24 @@ def E_gain_next_turn_inv_const(delta_p, delta_n, edges, probs, q, Q):
     E_dN_n = np.sum(np.array([k*lam_n**k/factorial(k)*np.exp(-lam_n) for k in range(0, Q-q+1)]))
 
     return delta_p * E_dN_p + delta_n * E_dN_n
+
+# def E_gain_next_turn_langevin(delta_p, delta_n, edges, probs, q, Q, eta, St, Se):
+#     lam_p = gamma_p(delta_p, edges, probs)
+#     lam_n = gamma_n(delta_n, edges, probs)
+#     E_dN_p = np.sum(np.array([k*lam_p**k/factorial(k)*np.exp(-lam_p) for k in range(0, Q+q+1)]))
+#     E_dN_n = np.sum(np.array([k*lam_n**k/factorial(k)*np.exp(-lam_n) for k in range(0, Q-q+1)]))
+
+#     return delta_p * E_dN_p + delta_n * E_dN_n +q*(St-Se)*(eta-1) + (St-Se)*(eta-1)*(E_dN_n-E_dN_p)
+
+@njit
+def E_gain_next_turn_langevin(delta_p, delta_n, edges, probs, q, Q, eta, St, Se):
+    lam_p = gamma_p(delta_p, edges, probs)
+    lam_n = gamma_n(delta_n, edges, probs)
+    E_dN_p = np.sum(np.array([k*lam_p**k/factorial(k)*np.exp(-lam_p) for k in range(0, Q+q+1)]))
+    E_dN_n = np.sum(np.array([k*lam_n**k/factorial(k)*np.exp(-lam_n) for k in range(0, Q-q+1)]))
+
+    return delta_p * E_dN_p + delta_n * E_dN_n +q*(St-Se)*(eta-1) + (St-Se)*(eta-1)*((q+Q)*E_dN_n-(-q+Q)*E_dN_p)
+
 
 #@njit
 def pois_pmf(k, lam):
@@ -300,7 +350,7 @@ def plot_policies(policy_p, policy_n, T, Q):
     fig.colorbar(ax[1].imshow(im_policy_n, cmap='Reds', origin='lower', aspect='auto', interpolation= "None"  ))
 
 def plot_next_turn_gain(delta_p, delta_n, edges, probs):
-    x = np.linspace(0, 6, 1000)
+    x = np.linspace(0, 8, 1000)
     lam_b = np.empty_like(x)
     lam_n = np.empty_like(x)
     for i, x_i in enumerate(x):
@@ -348,14 +398,33 @@ def plot_next_turn_gain(delta_p, delta_n, edges, probs):
     ax[1].plot(delta_p, E_const[:,0])
     ax[1].set_title("delta_p")
 
-
-    
-    fig, ax = plt.subplots()
-    fig.colorbar(ax.imshow(E_free-E_const, cmap='Blues', origin='lower',
-                            extent=[delta_n[0]-0.5,delta_n[-1]+0.5,delta_p[0]-0.5,delta_p[-1]+0.5]))
-    ax.set_xlabel("delta_n")
-    ax.set_ylabel("delta_p")
     plt.show()
+
+
+def plot_next_turn_gain_langevin(delta_p, delta_n, edges, probs, q, Q, eta, St, Se, plots = True):
+
+    E_langevin = np.empty((len(delta_p), len(delta_n)))
+    
+    for i, dp in enumerate(delta_p):
+        for j, dn in enumerate(delta_n):
+            E_langevin[i,j] = E_gain_next_turn_langevin(dp, dn, edges, probs, q, Q, eta, St, Se)
+    maxindex = np.unravel_index(np.argmax(E_langevin, axis=None), E_langevin.shape)
+    max_delta_p = delta_p[maxindex[0]]
+    max_delta_n = delta_n[maxindex[1]]
+    if plots:
+        print(max_delta_p, -max_delta_n)
+        print(f"E(dq) = {-gamma_p(max_delta_p, edges, probs)+gamma_n(max_delta_n, edges, probs)}")
+
+        fig, ax = plt.subplots()
+
+        fig.colorbar(ax.imshow(E_langevin, cmap='Blues', origin='lower',
+                            extent=[delta_n[0]-0.5,delta_n[-1]+0.5,delta_p[0]-0.5,delta_p[-1]+0.5]))
+        ax.set_xlabel("delta_n")
+        ax.set_ylabel("delta_p")
+        plt.show()
+
+    return max_delta_p, max_delta_n, E_langevin[maxindex]
+
 
 
 def run_model(bounds):
@@ -375,6 +444,7 @@ def run_model(bounds):
         E_T[i] = np.sum(E)
     return E_T
 
+
 if __name__ == "__main__":
 
     # x = [0,0, 1]
@@ -383,22 +453,25 @@ if __name__ == "__main__":
     # raise Error
 
 
-    Q = 20
+    Q = 60
     T = 1000
     q = 0
-    product = "AMETHYSTS"
+    product = "GIFT_BASKET"
 
-    trade_file_paths = [f"data/ProvidedData/trades_round_1_day_{i}_nn.csv" for i in [-2, -1, 0]]
-    activities_file_paths = [f"data/ProvidedData/prices_round_1_day_{i}.csv" for i in [-2, -1, 0]]
+    # trade_file_paths_r1 = [f"data/ProvidedData/trades_round_1_day_{i}_nn.csv" for i in [-2, -1, 0]]
+    # activities_file_paths_r1 = [f"data/ProvidedData/prices_round_1_day_{i}.csv" for i in [-2, -1, 0]]
 
-    probs, edges = generate_edges_probs_from_data_files(trade_file_paths, activities_file_paths, product, n_subdivs = 50, max_volume = 5)
+    trade_file_paths_r3 = [f"data/ProvidedData/trades_round_3_day_{i}_nn.csv" for i in [0,1,2]]
+    activities_file_paths_r3 = [f"data/ProvidedData/prices_round_3_day_{i}.csv" for i in [0,1,2]]
+
+    probs, edges = generate_edges_probs_from_data_files(trade_file_paths_r3, activities_file_paths_r3, product, n_subdivs = 50, max_volume = 20)
 
     plt.show()
 
     if product == "STARFRUIT":
         delta_p = np.linspace(0.5,6.5,600+1) #[0,1,2,3,4,5,6]
         delta_n = np.linspace(0.5,6.5,600+1)
-        bound = 10
+        bound = 14
         policy_p = construct_policy_p(base = 3.5, steps_dicts= [{bound:0}])
         policy_n = construct_policy_n(base = 2.5, steps_dicts= [{-bound:0}])
 
@@ -414,20 +487,90 @@ if __name__ == "__main__":
         bound = 17
         policy_p = construct_policy_p(base = 2, steps_dicts= [{bound:0}, {bound:0}])
         policy_n = construct_policy_n(base = 2, steps_dicts= [{-bound:0}, {-bound:0}])
-
+    else:
+        delta_p = np.linspace(0,7,70+1)
+        delta_n = np.linspace(0,7,70+1)
+    
     #plot_policies(policy_p, policy_n, T, Q)
+    print(probs)
 
 
-    plot_next_turn_gain(delta_p, delta_n, edges, probs)
+
+    #probs = 60/1000*(np.where(edges[1:]>=-5.5, 1, 0)*np.where(edges[:-1]<-5.5, 1, 0) + np.where(edges[1:]>=5.5, 1, 0)*np.where(edges[:-1]<5.5, 1, 0))
+    #print(probs)
+
+
+    #plot_next_turn_gain(delta_p, delta_n, edges, probs)
+    St_arr = np.linspace(-250.0,250.0,51)
+    q_arr = np.linspace(-59,59,60, dtype=int)
+
+    opt_dp = np.empty((len(St_arr), len(q_arr)), dtype = float)
+    opt_dn = np.empty((len(St_arr), len(q_arr)), dtype = float)
+    opt_E = np.empty((len(St_arr), len(q_arr)), dtype = float)
+
+    conditions_n = np.zeros((len(St_arr), len(q_arr)), dtype = float)
+    conditions_p = np.zeros((len(St_arr), len(q_arr)), dtype = float)
+    eta = 0.996
+    C1 = 3
+    C2 = 6
+
+    for i, St in tqdm(enumerate(St_arr)):
+        for j, q in tqdm(enumerate(q_arr)):
+            opt_dp[i,j], opt_dn[i,j], opt_E[i,j] = plot_next_turn_gain_langevin(delta_p, delta_n, edges, probs, q, Q, eta, St, 0.0, plots = False)
+            if St*(Q+q)*(1-eta)>= C2:
+                conditions_n[i,j] = 2
+            elif St*(Q+q)*(1-eta)>= C1:
+                conditions_n[i,j] = 1
+            
+            if St*(-Q+q)*(1-eta)>= C2:
+                conditions_p[i,j] = 2
+            elif St*(-Q+q)*(1-eta)>= C1:
+                conditions_p[i,j] = 1
+
+
+    
+    fig, ax = plt.subplots(2,3)
+    fig.colorbar(ax[0,0].imshow(opt_dp, cmap='Blues', origin='lower', aspect='auto', interpolation= "None"  ))
+    fig.colorbar(ax[0,1].imshow(opt_dn, cmap='Reds', origin='lower', aspect='auto', interpolation= "None"  ))
+    fig.colorbar(ax[0,2].imshow(opt_E, cmap='Greens', origin='lower', aspect='auto', interpolation= "None"  ))
+    fig.colorbar(ax[1,0].imshow(conditions_p, cmap='Blues', origin='lower', aspect='auto', interpolation= "None"  ))
+    fig.colorbar(ax[1,1].imshow(conditions_n, cmap='Reds', origin='lower', aspect='auto', interpolation= "None"  ))
+    #set the x and y axis values for the subplots up to 1 decimal
+    for i in range(3):
+        ax[0,i].set_xticks(np.arange(0, len(q_arr), 10))
+        ax[0,i].set_xticklabels(np.round(q_arr[::10], 1))
+        ax[0,i].set_yticks(np.arange(0, len(St_arr), 10))
+        ax[0,i].set_yticklabels(np.round(St_arr[::10], 1))
+        ax[1,i].set_xticks(np.arange(0, len(q_arr), 10))
+        ax[1,i].set_xticklabels(np.round(q_arr[::10], 1))
+        ax[1,i].set_yticks(np.arange(0, len(St_arr), 10))
+        ax[1,i].set_yticklabels(np.round(St_arr[::10], 1))
+
+
+    #set the titles of the subplots
+    ax[0,0].set_title("optimal delta_p")
+    ax[0,1].set_title("optimal delta_n")
+    ax[0,2].set_title("E or optimal point")
+
+    #set axis labels
+    ax[0,0].set_ylabel("St")
+    ax[0,0].set_xlabel("q")
+    ax[0,1].set_ylabel("St")
+    ax[0,1].set_xlabel("q")
+    ax[0,2].set_ylabel("St")
+    ax[0,2].set_xlabel("q")
+
+    plt.show()
+
     #run_model([5])
     #plt.show()
 
     
 
-    E = run_model([9,10,11,12,13,14,15,16,17,18,19,20])
-    print(E)
-    print(np.argmax(E), np.max(E))
-    plt.show()
+    # E = run_model([9,10,11,12,13,14,15,16,17,18,19,20])
+    # print(E)
+    # print(np.argmax(E), np.max(E))
+    # plt.show()
   
 
 
